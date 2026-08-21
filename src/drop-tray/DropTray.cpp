@@ -3209,8 +3209,13 @@ static LRESULT CALLBACK WindowProc(
 
         return 0;
 
-    case WM_NCHITTEST:
+    case WM_NCHITTEST: {
+        POINT pt{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        ScreenToClient(hwnd, &pt);
+        if (g_app && g_app->HitTest(pt) == -1 && !g_app->HitPlus(pt))
+            return HTCAPTION;
         return HTCLIENT;
+    }
 
     case WM_DESTROY:
         if (g_app) {
