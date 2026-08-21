@@ -20,6 +20,7 @@
 #include <shlobj.h>
 #include <shobjidl.h>
 #include <dwmapi.h>
+#include <gdiplus.h>
 #include <objbase.h>
 #include <ole2.h>
 
@@ -38,9 +39,12 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "uuid.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "gdiplus.lib")
 #endif
 
 namespace DropPanel {
+
+static ULONG_PTR gdiPlusToken = 0;
 
 // ============================================================================
 // Constants
@@ -1214,6 +1218,11 @@ public:
     ~DropPanelApp() = default;
 
     bool AttachWindow(HWND hwnd) {
+        if (gdiPlusToken == 0) {
+            Gdiplus::GdiplusStartupInput input;
+            Gdiplus::GdiplusStartup(&gdiPlusToken, &input, nullptr);
+        }
+
         hwnd_ = hwnd;
 
         dpi_ = GetDpiForWindow(hwnd_);
@@ -1737,60 +1746,39 @@ public:
             TRANSPARENT
         );
 
-        HPEN borderPen =
-            CreatePen(
-                PS_SOLID,
-                Scale(1),
-                externalDragActive_
-                ? kAccentBorder
-                : kBorder
-            );
+        {
+            Gdiplus::Graphics graphics(hdc);
+            graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            Gdiplus::GraphicsPath path;
+            const Gdiplus::REAL inset = 1.0f;
+            const Gdiplus::REAL radius = static_cast<Gdiplus::REAL>(Scale(34));
+            const Gdiplus::REAL left = inset;
+            const Gdiplus::REAL top = inset;
+            const Gdiplus::REAL right = static_cast<Gdiplus::REAL>(width) - inset;
+            const Gdiplus::REAL bottom = static_cast<Gdiplus::REAL>(height) - inset;
 
-        HBRUSH background =
-            CreateSolidBrush(
-                backgroundColor
-            );
+            path.AddArc(left, top, radius, radius, 180, 90);
+            path.AddArc(right - radius, top, radius, radius, 270, 90);
+            path.AddArc(right - radius, bottom - radius, radius, radius, 0, 90);
+            path.AddArc(left, bottom - radius, radius, radius, 90, 90);
+            path.CloseFigure();
 
-        if (borderPen && background) {
-            HGDIOBJ oldPen =
-                SelectObject(
-                    hdc,
-                    borderPen
-                );
+            Gdiplus::SolidBrush fill(
+                Gdiplus::Color(255,
+                    GetRValue(backgroundColor),
+                    GetGValue(backgroundColor),
+                    GetBValue(backgroundColor)));
 
-            HGDIOBJ oldBrush =
-                SelectObject(
-                    hdc,
-                    background
-                );
+            Gdiplus::Pen stroke(
+                Gdiplus::Color(255,
+                    GetRValue(externalDragActive_ ? kAccentBorder : kBorder),
+                    GetGValue(externalDragActive_ ? kAccentBorder : kBorder),
+                    GetBValue(externalDragActive_ ? kAccentBorder : kBorder)),
+                static_cast<Gdiplus::REAL>(Scale(1)));
 
-            RoundRect(
-                hdc,
-                0,
-                0,
-                width,
-                height,
-                Scale(kPanelCornerRadius),
-                Scale(kPanelCornerRadius)
-            );
-
-            SelectObject(
-                hdc,
-                oldBrush
-            );
-
-            SelectObject(
-                hdc,
-                oldPen
-            );
-        }
-
-        if (background) {
-            DeleteObject(background);
-        }
-
-        if (borderPen) {
-            DeleteObject(borderPen);
+            graphics.FillPath(&fill, &path);
+            stroke.SetAlignment(Gdiplus::PenAlignmentInset);
+            graphics.DrawPath(&stroke, &path);
         }
 
         for (int i = 0;
@@ -2572,142 +2560,39 @@ private:
     void DrawAddButton(
         HDC hdc
     ) {
-        const RECT rect =
-            addRect_;
+        const RECT rect = addRect_;
+        if (rect.right <= rect.left || rect.bottom <= rect.top) return;
 
-        if (rect.right <= rect.left ||
-            rect.bottom <= rect.top) {
+        const bool highlighted = plusHovered_ || externalDragActive_;
+        Gdiplus::Graphics graphics(hdc);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
 
-            return;
-        }
+        const int size = rect.right - rect.left;
+        Gdiplus::SolidBrush brush(Gdiplus::Color(255,
+            GetRValue(highlighted ? kButtonHover : kButton),
+            GetGValue(highlighted ? kButtonHover : kButton),
+            GetBValue(highlighted ? kButtonHover : kButton)));
 
-        const bool highlighted =
-            plusHovered_ ||
-            externalDragActive_;
+        Gdiplus::Pen border(Gdiplus::Color(255,
+            GetRValue(highlighted ? kAccentBorder : kBorder),
+            GetGValue(highlighted ? kAccentBorder : kBorder),
+            GetBValue(highlighted ? kAccentBorder : kBorder)),
+            static_cast<Gdiplus::REAL>(Scale(1)));
 
-        HBRUSH brush =
-            CreateSolidBrush(
-                highlighted
-                ? kButtonHover
-                : kButton
-            );
+        graphics.FillEllipse(&brush, rect.left, rect.top, size, size);
+        graphics.DrawEllipse(&border, rect.left, rect.top, size, size);
 
-        HPEN pen =
-            CreatePen(
-                PS_SOLID,
-                Scale(1),
-                highlighted
-                ? kAccentBorder
-                : kBorder
-            );
+        Gdiplus::Pen plus(Gdiplus::Color(255,
+            GetRValue(kText), GetGValue(kText), GetBValue(kText)),
+            static_cast<Gdiplus::REAL>(Scale(2)));
+        plus.SetLineCap(Gdiplus::LineCapRound, Gdiplus::LineCapRound, Gdiplus::DashCapRound);
 
-        if (!brush || !pen) {
-            if (brush) {
-                DeleteObject(brush);
-            }
+        const int cx = (rect.left + rect.right) / 2;
+        const int cy = (rect.top + rect.bottom) / 2 + Scale(kPlusYOffset);
+        const int half = Scale(kPlusSize) / 2;
 
-            if (pen) {
-                DeleteObject(pen);
-            }
-
-            return;
-        }
-
-        HGDIOBJ oldBrush =
-            SelectObject(
-                hdc,
-                brush
-            );
-
-        HGDIOBJ oldPen =
-            SelectObject(
-                hdc,
-                pen
-            );
-
-        Ellipse(
-            hdc,
-            rect.left,
-            rect.top,
-            rect.right,
-            rect.bottom
-        );
-
-        SelectObject(
-            hdc,
-            oldPen
-        );
-
-        SelectObject(
-            hdc,
-            oldBrush
-        );
-
-        DeleteObject(pen);
-        DeleteObject(brush);
-
-        // Draw a geometric plus instead of a font glyph so its vertical alignment
-        // stays stable across DPI settings and font substitutions.
-        HPEN plusPen =
-            CreatePen(
-                PS_SOLID,
-                std::max(
-                    Scale(2),
-                    1
-                ),
-                kText
-            );
-
-        if (plusPen) {
-            HGDIOBJ oldPlusPen =
-                SelectObject(
-                    hdc,
-                    plusPen
-                );
-
-            const int centerX =
-                (rect.left + rect.right) / 2;
-
-            const int centerY =
-                (rect.top + rect.bottom) / 2 +
-                Scale(kPlusYOffset);
-
-            const int half =
-                Scale(kPlusSize) / 2;
-
-            MoveToEx(
-                hdc,
-                centerX - half,
-                centerY,
-                nullptr
-            );
-
-            LineTo(
-                hdc,
-                centerX + half,
-                centerY
-            );
-
-            MoveToEx(
-                hdc,
-                centerX,
-                centerY - half,
-                nullptr
-            );
-
-            LineTo(
-                hdc,
-                centerX,
-                centerY + half
-            );
-
-            SelectObject(
-                hdc,
-                oldPlusPen
-            );
-
-            DeleteObject(plusPen);
-        }
+        graphics.DrawLine(&plus, cx - half, cy, cx + half, cy);
+        graphics.DrawLine(&plus, cx, cy - half, cx, cy + half);
     }
 
     static void DrawFallbackFileIcon(
