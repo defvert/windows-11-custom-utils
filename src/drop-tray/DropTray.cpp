@@ -1769,16 +1769,7 @@ public:
                     GetGValue(backgroundColor),
                     GetBValue(backgroundColor)));
 
-            Gdiplus::Pen stroke(
-                Gdiplus::Color(255,
-                    GetRValue(externalDragActive_ ? kAccentBorder : kBorder),
-                    GetGValue(externalDragActive_ ? kAccentBorder : kBorder),
-                    GetBValue(externalDragActive_ ? kAccentBorder : kBorder)),
-                static_cast<Gdiplus::REAL>(Scale(1)));
-
             graphics.FillPath(&fill, &path);
-            stroke.SetAlignment(Gdiplus::PenAlignmentInset);
-            graphics.DrawPath(&stroke, &path);
         }
 
         for (int i = 0;
